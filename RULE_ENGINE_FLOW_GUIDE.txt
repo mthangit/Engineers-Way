@@ -1,0 +1,260 @@
+
+================================================================================
+CẤU TRÚC DATABASE - DATABASE STRUCTURE
+================================================================================
+
+TỔNG QUAN THIẾT KẾ DATABASE
+---------------------------
+Database được thiết kế theo mô hình quan hệ với 3 bảng chính, hỗ trợ rule engine
+linh hoạt thông qua JSON configuration và many-to-many relationships.
+
+BẢNG 1: COUPON
+--------------
+Lưu trữ thông tin cơ bản của mỗi coupon
+
+Các cột chính:
+- ID: UUID primary key
+- CODE: Mã coupon user-friendly (UNIQUE)
+- TITLE, DESCRIPTION: Thông tin hiển thị
+- DISCOUNT_TYPE: "PERCENTAGE_DISCOUNT" hoặc "FIXED_DISCOUNT"
+- VALUE: Giá trị discount (% hoặc absolute amount)
+- START_DATE, EXPIRE_DATE: Thời gian hiệu lực
+- IS_ACTIVE: Soft delete flag
+- CREATED_AT, UPDATED_AT: Audit trail
+
+Business Logic:
+- Coupon valid khi: is_active=1 AND current_time BETWEEN start_date AND expire_date
+- Base discount calculation:
+  * PERCENTAGE: order_amount * (value/100)
+  * FIXED: min(value, order_amount)
+ 
+BẢNG 2: RULES
+-------------
+Master table chứa định nghĩa tất cả rule types
+
+Các cột chính:
+- ID: Unique identifier (human-readable)
+- TYPE: Rule type identifier (UNIQUE) - mapped với TypeRule enum
+- CONFIG: Default JSON configuration template
+- DESCRIPTION: Human-readable mô tả
+- CREATED_AT, UPDATED_AT: Audit trail
+
+Ví dụ data:
+- rule-min-order-1: TYPE="MIN_ORDER", CONFIG={"minOrderAmount": 100000}
+- rule-max-discount-1: TYPE="MAX_DISCOUNT", CONFIG={"maxDiscountAmount": 50000}
+
+BẢNG 3: COUPON_RULE (JUNCTION TABLE)
+------------------------------------
+Kết nối coupon với rules trong mối quan hệ many-to-many
+
+Các cột chính:
+- ID: Primary key
+- COUPON_ID: Foreign key đến coupon.id
+- RULE_ID: Foreign key đến rules.id  
+- CONFIG: Override configuration (JSON)
+
+Configuration Priority:
+1. coupon_rule.config (highest priority)
+2. rules.config (fallback)
+3. Handler default logic (last resort)
+
+Ví dụ usage:
+Coupon "SUMMER2024" có 2 rules:
+- Link với rule-min-order-1: config=null (dùng default)
+- Link với rule-max-discount-1: config={"maxDiscountAmount": 75000} (override)
+
+MỐI QUAN HỆ GIỮA CÁC BẢNG
+-------------------------
+COUPON ←1:N→ COUPON_RULE ←N:1→ RULES
+- Coupon có thể có nhiều rules
+- Rule có thể được nhiều coupons sử dụng
+- Coupon_rule lưu trữ custom config
+
+JSON CONFIGURATION SYSTEM
+--------------------------
+Configs được thiết kế flexible cho different rule types:
+
+MIN_ORDER: {"minOrderAmount": 100000}
+MAX_DISCOUNT: {"maxDiscountAmount": 50000}
+TIME_BASED (future): {"startTime": "09:00", "endTime": "17:00"}
+USER_LEVEL (future): {"allowedLevels": ["VIP"], "bonusPercentage": 5.0}
+
+=======================================
+
+CÓ 2 NHÓM RULES CHÍNH:
+
+1. QUALIFICATION RULES (Quy tắc điều kiện)
+-------------------------------------------
+Mục đích: Kiểm tra đơn hàng có đủ điều kiện áp dụng coupon không
+
+Ví dụ:
+- Đơn hàng tối thiểu 100K
+- Áp dụng trong khung giờ 9h-17h  
+- Chỉ dành cho user VIP
+- Áp dụng cho sản phẩm category cụ thể
+
+Logic: TẤT CẢ qualification rules phải PASS thì mới được áp dụng coupon
+
+2. ADJUSTMENT RULES (Quy tắc điều chỉnh)
+----------------------------------------
+Mục đích: Điều chỉnh mức discount sau khi đã pass qualification
+
+Ví dụ:
+- Giảm tối đa 50K (cap discount)
+- Bonus 10K cho user VIP
+- Giảm thêm 5% nếu mua trên 500K
+
+Logic: Chạy tuần tự, output của rule này = input của rule tiếp theo
+
+================================================================================
+MAPPING MECHANISM - CƠ CHẾ ÁNH XẠ
+================================================================================
+
+KHÁI NIỆM MAPPING
+-----------------
+Mapping là cách hệ thống biết rule nào cần dùng handler nào để xử lý.
+
+VÍ DỤ:
+- Rule "MIN_ORDER" → sử dụng MinOrderHandler
+- Rule "MAX_DISCOUNT" → sử dụng MaxDiscountHandler
+- Rule "TIME_BASED" → sử dụng TimeBasedHandler
+
+AUTO-DISCOVERY PROCESS
+----------------------
+Hệ thống tự động tìm và đăng ký handlers:
+
+Bước 1: SCAN HANDLERS
+Spring framework tự động quét toàn bộ project tìm các class
+implement RuleHandler interface và có annotation @Component
+
+Bước 2: CREATE MAPPING  
+Tạo một "danh bạ" (Map) ánh xạ giữa:
+- Key: Loại rule (MIN_ORDER, MAX_DISCOUNT, ...)
+- Value: Handler xử lý rule đó
+
+Bước 3: READY TO USE
+RuleProcessor có thể lookup handler nào cần dùng cho rule nào
+trong thời gian O(1) - rất nhanh
+
+LOOKUP PROCESS
+--------------
+Khi cần xử lý một rule:
+1. Lấy loại rule từ database (VD: "MIN_ORDER")
+2. Lookup trong Map để tìm handler tương ứng
+3. Gọi method validate() hoặc adjust() của handler đó
+4. Nhận kết quả và tiếp tục
+
+================================================================================
+RULE PROCESSING WORKFLOW - QUY TRÌNH XỬ LÝ
+================================================================================
+
+TỔNG QUAN WORKFLOW
+------------------
+Input: Coupon + Order + List<Rules>
+Output: Discount amount cuối cùng
+
+QUY TRÌNH 2 PHASE:
+
+PHASE 1: QUALIFICATION CHECK (Kiểm tra điều kiện)
+--------------------------------------------------
+Mục đích: Đảm bảo đơn hàng đủ điều kiện áp dụng coupon
+
+Flow:
+1. Lấy tất cả qualification rules của coupon
+2. Với mỗi rule:
+   - Tìm handler tương ứng từ mapping
+   - Parse config từ database
+   - Gọi handler.validate() với order context
+   - Nhận kết quả true/false
+
+3. Nếu TẤT CẢ rules return true:
+   → Tiếp tục Phase 2
+   
+4. Nếu có BẤT KỲ rule nào return false:
+   → Dừng ngay, discount = 0
+
+VÍ DỤ QUALIFICATION:
+Rule 1: MIN_ORDER với config {minAmount: 100000}
+→ Kiểm tra: orderAmount >= 100000? 
+→ Kết quả: true/false
+
+Rule 2: TIME_BASED với config {startTime: "09:00", endTime: "17:00"}
+→ Kiểm tra: 09:00 <= orderTime <= 17:00?
+→ Kết quả: true/false
+
+PHASE 2: DISCOUNT ADJUSTMENT (Điều chỉnh discount)
+---------------------------------------------------
+Mục đích: Tính toán discount cuối cùng
+
+Flow:
+1. Bắt đầu với base discount từ coupon
+   VD: Coupon 20% cho đơn 300K → base = 60K
+
+2. Lấy tất cả adjustment rules của coupon
+
+3. Với mỗi rule (chạy tuần tự):
+   - Tìm handler tương ứng từ mapping
+   - Parse config từ database  
+   - Gọi handler.adjust() với current discount
+   - Nhận discount mới (có thể thay đổi)
+
+4. Đảm bảo final discount >= 0
+
+VÍ DỤ ADJUSTMENT:
+Base discount: 60K
+
+Rule 1: MAX_DISCOUNT với config {maxAmount: 50000}
+→ Adjustment: min(60K, 50K) = 50K
+→ Current discount: 50K
+
+Rule 2: VIP_BONUS với config {bonusAmount: 5000}
+→ Adjustment: 50K + 5K = 55K  
+→ Final discount: 55K
+
+WORKFLOW THÊM RULE MỚI:
+
+STEP 1: DEFINE RULE TYPE
+------------------------
+Thêm loại rule mới vào danh sách enum
+VD: TIME_BASED, USER_LEVEL, PRODUCT_CATEGORY
+
+STEP 2: CREATE HANDLER
+----------------------
+Tạo class mới implement RuleHandler interface:
+- Khai báo loại rule nó xử lý
+- Khai báo nhóm rule (qualification/adjustment)
+- Implement logic cụ thể
+
+STEP 3: ADD TO DATABASE
+-----------------------
+Tạo rule record trong database với:
+- ID unique
+- Type = rule type mới
+- Config = JSON chứa parameters
+- Description
+
+STEP 4: AUTOMATIC MAPPING
+-------------------------
+Hệ thống tự động:
+- Phát hiện handler mới
+- Thêm vào mapping table
+- Sẵn sàng sử dụng ngay
+
+VÍ DỤ THÊM TIME_BASED RULE:
+---------------------------
+1. Thêm TIME_BASED vào TypeRule enum
+2. Tạo TimeBasedHandler implement RuleHandler
+3. Insert vào database:
+   INSERT INTO rules VALUES (
+     'rule-time-business-hours',
+     'TIME_BASED', 
+     '{"startTime": "09:00", "endTime": "17:00"}',
+     'Business hours only'
+   );
+4. Link với coupon:
+   INSERT INTO coupon_rule VALUES (
+     'cr-time-1',
+     'coupon-001', 
+     'rule-time-business-hours',
+     null
+   );
