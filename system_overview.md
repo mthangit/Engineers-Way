@@ -1,8 +1,4 @@
-# RULE ENGINE - MAPPING VÀ HANDLER SYSTEM
-
-## TỔNG QUAN RULE ENGINE
-
-Rule Engine được thiết kế với **Strategy Pattern** để xử lý các loại quy tắc khác nhau một cách linh hoạt và có thể mở rộng.
+# OVERVIEW OF ASSIGNMENT
 
 ## DATABASE STRUCTURE
 
