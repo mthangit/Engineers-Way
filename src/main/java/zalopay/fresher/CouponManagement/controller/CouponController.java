@@ -48,7 +48,7 @@ public class CouponController {
         return ResponseEntity.ok(pagedCoupons);
     }
     
-    @GetMapping("/{code}")
+    @GetMapping("/{couponCode}")
     public ResponseEntity<?> getCouponByCode(@PathVariable String couponCode) {
         String sanitizedCode = ValidationUtils.validateAndSanitizeCouponCode(couponCode);
         Optional<Coupon> coupon = couponService.getCouponByCode(sanitizedCode);

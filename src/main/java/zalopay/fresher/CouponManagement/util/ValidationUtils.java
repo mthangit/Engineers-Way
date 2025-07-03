@@ -7,8 +7,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class ValidationUtils {
     public static String sanitizeInput(String input) {
-        if (input == null || input.isBlank()) {
-            return input;
+        if (input == null) {
+            return null;
         }
         
         String cleaned = Jsoup.clean(input.strip(), Safelist.none());
@@ -16,8 +16,8 @@ public class ValidationUtils {
     }
     
     public static String validateAndSanitizeCouponCode(String code) {
-        if (code == null || code.isBlank()) {
-            return code;
+        if (code == null) {
+            return null;
         }
         
         String trimmed = code.strip().toUpperCase();

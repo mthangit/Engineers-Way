@@ -13,7 +13,7 @@ public class ErrorMessages {
     public static final String DESCRIPTION_INVALID_CONTENT = "Description cannot contain HTML special characters";
     
     public static final String ORDER_AMOUNT_REQUIRED = "Order amount is required";
-    public static final String ORDER_AMOUNT_MIN = "Order amount must be greater than 0";
+    public static final String ORDER_AMOUNT_MIN = "Order amount must be greater than 1";
     public static final String ORDER_DATE_REQUIRED = "Order date is required";
     
     public static final String INVALID_START_DATE = "Start date must be before end date";
