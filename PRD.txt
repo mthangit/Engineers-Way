@@ -1,0 +1,24 @@
+"Viết một sản phẩm phần mềm (Console, Backend Service, Web,...) để quản lý các coupons của Zalopay. 
+Người sử dụng sản phẩm ở đây là đội ngũ vận hành sản phẩm của Zalopay..
+
+Mỗi coupon có các thông tin sau: ""Mã giảm"", ""Tiêu đề"", ""Mô tả"", ""Loại giảm giá"", ""Cách sử dụng"", ""Hạn sử dụng"", ""Thông tin giảm giá""""
+Chú thích:
+Loại giảm giá:
+	- Theo phần trăm: Thông tin giảm giá sẽ là số % được giảm theo đơn hàng.
+	- Cụ thể số tiền: Thông tin giảm giá sẽ là số tiền cụ thể.
+	- PO huồm huồm sau này có thể có loại giảm đồng giá còn về (X) đ chẳng hạn nữa.
+Cách sử dụng:
+	- Mã phải nhập để sử dụng: User phải nhập cụ thể mã giảm giá để hưởng ưu đãi.
+	- Mã được tự động sử dụng: Nếu thuộc loại này thì mã giảm giá nào đang có sẵn và giảm nhiều nhất cho đơn hàng sẽ được tự động apply.
+Hạn sử dụng: Thời gian mà tại đó mã không còn có thể sử dụng.
+
+Yêu cầu:
+1/ Show được danh sách mã giảm giá theo ""Mã giảm"".
+2/ Khi chọn một ""Mã giảm"" thì show thông tin chi tiết mã giảm giá đó, và có thể edit thông tin mã giảm giá đó (nhưng không edit được value của ""Mã giảm)
+3/ Nhập một thông tin đơn hàng gồm:
+	- Số tiền cần thanh toán
+	- Thời gian tạo đơn hàng.
+	- ""Mã giảm"" (Optional)
+Từ đó hiển thị số tiền sẽ được giảm giá cho đơn hàng đó, và mã giảm giá tương ứng.
+
+Hết. Chúc sản phẩm 1 đời bình an!"

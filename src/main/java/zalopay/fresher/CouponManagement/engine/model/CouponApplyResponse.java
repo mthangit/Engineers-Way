@@ -1,7 +1,7 @@
-package zalopay.fresher.CouponManagement.egine.model;
+package zalopay.fresher.CouponManagement.engine.model;
 
 import lombok.Data;
-import zalopay.fresher.CouponManagement.egine.rule.RuleResult;
+import zalopay.fresher.CouponManagement.engine.rule.RuleResult;
 import zalopay.fresher.CouponManagement.model.Rule;
 
 import java.util.List;

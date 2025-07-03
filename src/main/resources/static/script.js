@@ -5,9 +5,69 @@ const ENDPOINTS = {
     orders: `${API_BASE}/orders/apply-coupon`
 };
 
+// HTML Sanitization utility - CRITICAL for XSS prevention
+function sanitizeHtml(str) {
+    if (!str) return '';
+    
+    const temp = document.createElement('div');
+    temp.textContent = str;
+    return temp.innerHTML;
+}
+
+function sanitizeAndTruncate(str, maxLength = 200) {
+    if (!str) return '';
+    
+    // First sanitize to prevent XSS
+    const sanitized = sanitizeHtml(str);
+    
+    // Then truncate if needed
+    if (sanitized.length > maxLength) {
+        return sanitized.substring(0, maxLength) + '...';
+    }
+    
+    return sanitized;
+}
+
+// Validate input to prevent malicious content
+function validateInput(input, fieldName, maxLength = 500) {
+    if (!input) return '';
+    
+    // Check for common XSS patterns
+    const xssPatterns = [
+        /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,
+        /<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi,
+        /javascript:/gi,
+        /on\w+\s*=/gi,
+        /<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi,
+        /<embed\b[^<]*(?:(?!<\/embed>)<[^<]*)*<\/embed>/gi
+    ];
+    
+    for (const pattern of xssPatterns) {
+        if (pattern.test(input)) {
+            throw new Error(`Nội dung ${fieldName} chứa mã không an toàn!`);
+        }
+    }
+    
+    if (input.length > maxLength) {
+        throw new Error(`${fieldName} không được vượt quá ${maxLength} ký tự!`);
+    }
+    
+    return sanitizeHtml(input);
+}
+
 // Global state
 let allCoupons = [];
 let filteredCoupons = [];
+let paginationData = {
+    currentPage: 0,
+    pageSize: 10,
+    totalPages: 0,
+    totalElements: 0,
+    first: true,
+    last: true,
+    hasNext: false,
+    hasPrevious: false
+};
 
 // DOM elements
 const elements = {
@@ -15,17 +75,35 @@ const elements = {
     tabContents: document.querySelectorAll('.tab-content'),
     searchInput: document.getElementById('searchInput'),
     couponGrid: document.getElementById('couponGrid'),
-    createForm: document.getElementById('createCouponForm'),
     editForm: document.getElementById('editCouponForm'),
     orderForm: document.getElementById('orderForm'),
     orderResult: document.getElementById('orderResult'),
     modal: document.getElementById('couponModal'),
     loadingOverlay: document.getElementById('loadingOverlay'),
-    toastContainer: document.getElementById('toastContainer')
+    toastContainer: document.getElementById('toastContainer'),
+    paginationContainer: document.getElementById('paginationContainer'),
+    paginationInfo: document.getElementById('paginationInfo'),
+    paginationPages: document.getElementById('paginationPages'),
+    firstPageBtn: document.getElementById('firstPageBtn'),
+    prevPageBtn: document.getElementById('prevPageBtn'),
+    nextPageBtn: document.getElementById('nextPageBtn'),
+    lastPageBtn: document.getElementById('lastPageBtn'),
+    pageSize: document.getElementById('pageSize')
 };
+
+// Clean URL from unwanted query parameters
+function cleanURL() {
+    if (window.location.search) {
+        console.log('Cleaning URL query parameters:', window.location.search);
+        // Remove all query parameters from URL without page reload
+        const url = window.location.protocol + "//" + window.location.host + window.location.pathname;
+        window.history.replaceState({ path: url }, '', url);
+    }
+}
 
 // Initialize app
 document.addEventListener('DOMContentLoaded', function() {
+    cleanURL(); // Clean URL first
     initializeTabs();
     initializeEventListeners();
     loadCoupons();
@@ -65,9 +143,19 @@ function initializeEventListeners() {
     elements.searchInput.addEventListener('input', debounce(handleSearch, 300));
     
     // Form submissions
-    elements.createForm.addEventListener('submit', handleCreateCoupon);
     elements.editForm.addEventListener('submit', handleEditCoupon);
     elements.orderForm.addEventListener('submit', handleOrderCalculation);
+    
+    // Global form submission prevention - prevent any form from submitting normally
+    document.addEventListener('submit', function(e) {
+        console.log('Form submission attempted:', e.target.id);
+        // Allow only specific forms that we handle with JavaScript
+        if (e.target.id !== 'editCouponForm' && e.target.id !== 'orderForm') {
+            console.log('Preventing form submission for:', e.target.id);
+            e.preventDefault();
+            return false;
+        }
+    });
     
     // Modal functionality
     document.querySelector('.close').addEventListener('click', closeCouponModal);
@@ -83,22 +171,47 @@ function initializeEventListeners() {
             closeCouponModal();
         }
     });
+    
+    // Handle browser back/forward navigation
+    window.addEventListener('popstate', function(e) {
+        console.log('Popstate event triggered');
+        cleanURL();
+    });
+    
+    // Pagination event listeners
+    elements.firstPageBtn.addEventListener('click', () => goToPage(0));
+    elements.prevPageBtn.addEventListener('click', () => goToPage(paginationData.currentPage - 1));
+    elements.nextPageBtn.addEventListener('click', () => goToPage(paginationData.currentPage + 1));
+    elements.lastPageBtn.addEventListener('click', () => goToPage(paginationData.totalPages - 1));
+    elements.pageSize.addEventListener('change', (e) => {
+        paginationData.pageSize = parseInt(e.target.value);
+        paginationData.currentPage = 0; // Reset to first page when changing page size
+        loadCoupons();
+    });
 }
 
 // Set default date/time values
 function setDefaultDateTime() {
     const now = new Date();
-    const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
     
-    // Set default start date to now
-    document.getElementById('startDate').value = formatDateTimeLocal(now);
-    document.getElementById('orderDate').value = formatDateTimeLocal(now);
-    
-    // Set default expire date to one week from now
-    document.getElementById('expireDate').value = formatDateTimeLocal(nextWeek);
+    // Set default order date to now
+    const orderDateElement = document.getElementById('orderDate');
+    if (orderDateElement) {
+        orderDateElement.value = formatDateTimeLocal(now);
+    }
 }
 
 // Utility functions
+function extractMessage(response, defaultMessage = '') {
+    // Lấy message từ response theo priority
+    return response?.message || response?.data?.message || defaultMessage;
+}
+
+function extractData(response) {
+    // Lấy data từ response, ưu tiên data field trước
+    return response?.data !== undefined ? response.data : response;
+}
+
 function formatDateTimeLocal(date) {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -150,14 +263,20 @@ async function apiCall(url, options = {}) {
             ...options
         });
         
+        const data = await response.json();
+        
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            const errorMessage = data.message || `HTTP error! status: ${response.status}`;
+            throw new Error(errorMessage);
         }
         
-        return await response.json();
+        if (data.message) {
+            console.log('API Response Message:', data.message);
+        }
+        
+        return data;
     } catch (error) {
         console.error('API call failed:', error);
-        showToast('Có lỗi xảy ra khi gọi API: ' + error.message, 'error');
         throw error;
     } finally {
         hideLoading();
@@ -167,13 +286,38 @@ async function apiCall(url, options = {}) {
 // Coupon management
 async function loadCoupons() {
     try {
-        const coupons = await apiCall(ENDPOINTS.coupons);
-        allCoupons = coupons;
-        filteredCoupons = coupons;
+        showLoading();
+        
+        const url = `${ENDPOINTS.coupons}/paged?page=${paginationData.currentPage}&size=${paginationData.pageSize}&sortBy=id&sortDir=asc`;
+        const response = await apiCall(url);
+        
+        if (response.message) {
+            console.log('Load Coupons Message:', response.message);
+        }
+        
+        const pagedResponse = response.data || response;
+        allCoupons = pagedResponse.content || [];
+        filteredCoupons = allCoupons;
+        
+        paginationData = {
+            currentPage: pagedResponse.page || 0,
+            pageSize: pagedResponse.size || 10,
+            totalPages: pagedResponse.totalPages || 0,
+            totalElements: pagedResponse.totalElements || 0,
+            first: pagedResponse.first !== false,
+            last: pagedResponse.last !== false,
+            hasNext: pagedResponse.hasNext === true,
+            hasPrevious: pagedResponse.hasPrevious === true
+        };
+        
         renderCoupons();
+        renderPagination();
+        hideLoading();
     } catch (error) {
         console.error('Failed to load coupons:', error);
-        renderEmptyState('Không thể tải danh sách coupon');
+        renderEmptyState('Không thể tải danh sách coupon: ' + error.message);
+        hidePagination();
+        hideLoading();
     }
 }
 
@@ -184,11 +328,11 @@ function renderCoupons() {
     }
     
     elements.couponGrid.innerHTML = filteredCoupons.map(coupon => `
-        <div class="coupon-card" onclick="openCouponModal('${coupon.code}')">
+        <div class="coupon-card" onclick="openCouponModal('${sanitizeHtml(coupon.code)}')">
             <div class="coupon-header">
                 <div>
-                    <div class="coupon-code">${coupon.code}</div>
-                    <div class="coupon-title">${coupon.title || 'Không có tiêu đề'}</div>
+                    <div class="coupon-code">${sanitizeHtml(coupon.code)}</div>
+                    <div class="coupon-title">${sanitizeAndTruncate(coupon.title || 'Không có tiêu đề', 100)}</div>
                 </div>
                 <div class="coupon-status ${getCouponStatusClass(coupon)}">
                     ${getCouponStatusText(coupon)}
@@ -201,7 +345,7 @@ function renderCoupons() {
                 </div>
                 <div class="coupon-value">
                     ${formatDiscountValue(coupon.value, coupon.discountType)}
-                </div>
+                </div>     
                 <div class="coupon-dates">
                     <strong>Từ:</strong> ${formatDateTime(coupon.startDate)}<br>
                     <strong>Đến:</strong> ${formatDateTime(coupon.expireDate)}
@@ -221,9 +365,75 @@ function renderEmptyState(message) {
     `;
 }
 
+function renderPagination() {
+    if (paginationData.totalElements === 0) {
+        hidePagination();
+        return;
+    }
+    
+    showPagination();
+    
+    // Update pagination info
+    const startItem = paginationData.currentPage * paginationData.pageSize + 1;
+    const endItem = Math.min((paginationData.currentPage + 1) * paginationData.pageSize, paginationData.totalElements);
+    elements.paginationInfo.textContent = `Hiển thị ${startItem} - ${endItem} trong tổng số ${paginationData.totalElements} coupon`;
+    
+    // Update navigation buttons
+    elements.firstPageBtn.disabled = paginationData.first;
+    elements.prevPageBtn.disabled = !paginationData.hasPrevious;
+    elements.nextPageBtn.disabled = !paginationData.hasNext;
+    elements.lastPageBtn.disabled = paginationData.last;
+    
+    // Update page size selector
+    elements.pageSize.value = paginationData.pageSize;
+    
+    // Render page numbers
+    renderPageNumbers();
+}
+
+function renderPageNumbers() {
+    const maxVisiblePages = 5;
+    let startPage = Math.max(0, paginationData.currentPage - Math.floor(maxVisiblePages / 2));
+    let endPage = Math.min(paginationData.totalPages - 1, startPage + maxVisiblePages - 1);
+    
+    // Adjust start page if we're near the end
+    if (endPage - startPage < maxVisiblePages - 1) {
+        startPage = Math.max(0, endPage - maxVisiblePages + 1);
+    }
+    
+    let pagesHtml = '';
+    
+    for (let i = startPage; i <= endPage; i++) {
+        const isActive = i === paginationData.currentPage;
+        pagesHtml += `
+            <button class="page-btn ${isActive ? 'active' : ''}" 
+                    onclick="goToPage(${i})"
+                    ${isActive ? 'disabled' : ''}>
+                ${i + 1}
+            </button>
+        `;
+    }
+    
+    elements.paginationPages.innerHTML = pagesHtml;
+}
+
+function showPagination() {
+    elements.paginationContainer.style.display = 'flex';
+}
+
+function hidePagination() {
+    elements.paginationContainer.style.display = 'none';
+}
+
+function goToPage(page) {
+    if (page >= 0 && page < paginationData.totalPages && page !== paginationData.currentPage) {
+        paginationData.currentPage = page;
+        loadCoupons();
+    }
+}
+
 function getCouponStatusClass(coupon) {
     const now = new Date();
-    const startDate = new Date(coupon.startDate);
     const expireDate = new Date(coupon.expireDate);
     
     if (now > expireDate) return 'status-expired';
@@ -233,7 +443,6 @@ function getCouponStatusClass(coupon) {
 
 function getCouponStatusText(coupon) {
     const now = new Date();
-    const startDate = new Date(coupon.startDate);
     const expireDate = new Date(coupon.expireDate);
     
     if (now > expireDate) return 'Hết hạn';
@@ -248,21 +457,21 @@ function formatDiscountValue(value, type) {
     return formatCurrency(value);
 }
 
-// Search functionality
 function handleSearch(event) {
     const searchTerm = event.target.value.toLowerCase().trim();
     
     if (searchTerm === '') {
-        filteredCoupons = allCoupons;
+        loadCoupons();
     } else {
         filteredCoupons = allCoupons.filter(coupon => 
             coupon.code.toLowerCase().includes(searchTerm) ||
             (coupon.title && coupon.title.toLowerCase().includes(searchTerm)) ||
             (coupon.description && coupon.description.toLowerCase().includes(searchTerm))
         );
+        renderCoupons();
+        
+        hidePagination();
     }
-    
-    renderCoupons();
 }
 
 // Modal functionality
@@ -273,15 +482,24 @@ async function openCouponModal(couponCode) {
             return;
         }
         
-        // Populate form fields
         document.getElementById('editCouponId').value = coupon.id || '';
         document.getElementById('editCode').value = coupon.code;
         document.getElementById('editTitle').value = coupon.title || '';
         document.getElementById('editDescription').value = coupon.description || '';
-        document.getElementById('editValue').value = coupon.value;
         document.getElementById('editStartDate').value = formatDateTimeLocal(new Date(coupon.startDate));
         document.getElementById('editExpireDate').value = formatDateTimeLocal(new Date(coupon.expireDate));
         document.getElementById('editIsActive').checked = coupon.isActive;
+        
+        document.getElementById('editDiscountType').value = coupon.discountType;
+        document.getElementById('editValue').value = coupon.value;
+        
+        const discountTypeText = coupon.discountType === 'PERCENTAGE_DISCOUNT' ? 'Theo phần trăm (%)' : 'Số tiền cố định (VNĐ)';
+        document.getElementById('editDiscountTypeDisplay').textContent = discountTypeText;
+        
+        const discountValueText = coupon.discountType === 'PERCENTAGE_DISCOUNT' 
+            ? `${coupon.value}%` 
+            : formatCurrency(coupon.value);
+        document.getElementById('editValueDisplay').textContent = discountValueText;
         
         elements.modal.style.display = 'block';
     } catch (error) {
@@ -291,63 +509,58 @@ async function openCouponModal(couponCode) {
 
 function closeCouponModal() {
     elements.modal.style.display = 'none';
+    
+    setTimeout(() => {
+        cleanURL();
+    }, 100);
 }
 
 // Form handlers
-async function handleCreateCoupon(event) {
-    event.preventDefault();
-    
-    const formData = new FormData(event.target);
-    const couponData = {
-        code: formData.get('code'),
-        title: formData.get('title'),
-        description: formData.get('description'),
-        discountType: formData.get('discountType'),
-        value: parseFloat(formData.get('value')),
-        startDate: formData.get('startDate'),
-        expireDate: formData.get('expireDate'),
-        isActive: formData.get('isActive') === 'on'
-    };
-    
-    try {
-        await apiCall(ENDPOINTS.coupons, {
-            method: 'POST',
-            body: JSON.stringify(couponData)
-        });
-        
-        event.target.reset();
-        setDefaultDateTime();
-        loadCoupons();
-        switchTab('coupons');
-    } catch (error) {
-        console.error('Failed to create coupon:', error);
-    }
-}
-
 async function handleEditCoupon(event) {
     event.preventDefault();
     
     const formData = new FormData(event.target);
-    const couponData = {
-        id: formData.get('id'),
-        code: formData.get('code'),
-        title: formData.get('title'),
-        description: formData.get('description'),
-        startDate: formData.get('startDate'),
-        expireDate: formData.get('expireDate'),
-        isActive: formData.get('isActive') === 'on'
-    };
     
     try {
-        await apiCall(`${ENDPOINTS.coupons}/${couponData.code}`, {
+        // Validate and sanitize input data
+        const couponData = {
+            id: formData.get('id'),
+            code: validateInput(formData.get('code'), 'Mã giảm giá', 50),
+            title: validateInput(formData.get('title'), 'Tiêu đề', 200),
+            description: validateInput(formData.get('description'), 'Mô tả', 1000),
+            startDate: formData.get('startDate'),
+            expireDate: formData.get('expireDate'),
+            isActive: formData.get('isActive') === 'on'
+        };
+        
+        // Additional validation
+        if (!couponData.code.trim()) {
+            throw new Error('Mã giảm giá không được để trống!');
+        }
+        
+        if (!couponData.title.trim()) {
+            throw new Error('Tiêu đề không được để trống!');
+        }
+        
+        const result = await apiCall(`${ENDPOINTS.coupons}`, {
             method: 'PATCH',
             body: JSON.stringify(couponData)
         });
         
+        // Lấy message từ API response hoặc dùng mặc định
+        const successMessage = result.message || 'Cập nhật coupon thành công!';
+        showToast(successMessage, 'success');
         closeCouponModal();
         loadCoupons();
+        
+        // Clean URL in case any query parameters were added
+        setTimeout(() => {
+            cleanURL();
+        }, 100);
+        
     } catch (error) {
         console.error('Failed to update coupon:', error);
+        showToast(error.message || 'Có lỗi xảy ra khi cập nhật coupon!', 'error');
     }
 }
 
@@ -356,7 +569,7 @@ async function handleOrderCalculation(event) {
     
     const formData = new FormData(event.target);
     const orderData = {
-        totalAmount: parseFloat(formData.get('totalAmount')),
+        orderTotalAmount: parseFloat(formData.get('totalAmount')),
         orderDate: formData.get('orderDate'),
         couponCode: formData.get('couponCode') || null
     };
@@ -368,6 +581,10 @@ async function handleOrderCalculation(event) {
         });
         
         renderOrderResult(result);
+        
+        setTimeout(() => {
+            cleanURL();
+        }, 100);
     } catch (error) {
         console.error('Failed to calculate order:', error);
     }
@@ -408,9 +625,9 @@ function renderOrderResult(result) {
             <div class="applied-coupons">
                 ${result.coupons.map(coupon => `
                     <div class="applied-coupon-item">
-                        <div class="coupon-code-display">${coupon.couponCode}</div>
-                        ${coupon.title ? `<div class="coupon-title-display">${coupon.title}</div>` : ''}
-                        ${coupon.description ? `<div class="coupon-description-display">${coupon.description}</div>` : ''}
+                        <div class="coupon-code-display">${sanitizeHtml(coupon.couponCode)}</div>
+                        ${coupon.title ? `<div class="coupon-title-display">${sanitizeAndTruncate(coupon.title, 150)}</div>` : ''}
+                        ${coupon.description ? `<div class="coupon-description-display">${sanitizeAndTruncate(coupon.description, 200)}</div>` : ''}
                     </div>
                 `).join('')}
             </div>
@@ -444,7 +661,7 @@ function showToast(message, type = 'info') {
     toast.innerHTML = `
         <div class="toast-content">
             <span class="toast-icon">${icons[type] || icons.info}</span>
-            <span class="toast-message">${message}</span>
+            <span class="toast-message">${sanitizeHtml(message)}</span>
         </div>
     `;
     

@@ -18,7 +18,4 @@ public class CouponRule {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "rule_id", nullable = false)
     Rule rule;
-
-    @Column(name = "config", columnDefinition = "JSON")
-    String config;
 }

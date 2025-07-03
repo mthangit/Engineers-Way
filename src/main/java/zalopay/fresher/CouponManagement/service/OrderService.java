@@ -7,12 +7,13 @@ import zalopay.fresher.CouponManagement.dto.CouponResponse;
 import zalopay.fresher.CouponManagement.dto.OrderCreateRequest;
 import zalopay.fresher.CouponManagement.dto.OrderResponse;
 import zalopay.fresher.CouponManagement.model.OrderContext;
-import zalopay.fresher.CouponManagement.egine.processor.RuleProcessor;
-import zalopay.fresher.CouponManagement.egine.model.CouponApplyResponse;
-import zalopay.fresher.CouponManagement.egine.model.CouponEvaluation;
+import zalopay.fresher.CouponManagement.engine.processor.RuleProcessor;
+import zalopay.fresher.CouponManagement.engine.model.CouponApplyResponse;
+import zalopay.fresher.CouponManagement.engine.model.CouponEvaluation;
 import zalopay.fresher.CouponManagement.model.Coupon;
 import zalopay.fresher.CouponManagement.model.CouponRule;
 import zalopay.fresher.CouponManagement.model.Rule;
+import zalopay.fresher.CouponManagement.util.GlobalConfig;
 
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -26,13 +27,15 @@ public class OrderService {
     private final CouponService couponService;
     private final RuleProcessor ruleProcessor;
 
+    @Transactional(readOnly = true)
     public OrderResponse applyCouponToOrder(OrderCreateRequest request) {
         OrderContext context = new OrderContext();
+        
         context.setCouponCode(request.getCouponCode());
         context.setOrderDate(request.getOrderDate());
-        context.setOrderAmount(request.getTotalAmount());
+        context.setOrderAmount(request.getOrderTotalAmount());
 
-        if (request.getCouponCode() != null && !request.getCouponCode().trim().isEmpty()) {
+        if (request.getCouponCode() != null && !request.getCouponCode().isBlank()) {
             return processManualCoupon(context);
         }
 
@@ -43,16 +46,16 @@ public class OrderService {
         Optional<Coupon> couponOptional = couponService.getCouponByCode(context.getCouponCode());
 
         if (couponOptional.isEmpty() || !couponOptional.get().isValid(context.getOrderDate())) {
-            return createFailureResponse(context.getOrderAmount(), "Coupon không tồn tại hoặc đã hết hạn");
+            return buildFailureOrderResponse(context.getOrderAmount(), "Coupon không tồn tại hoặc đã hết hạn");
         }
         Coupon coupon = couponOptional.get();
         CouponEvaluation evaluation = evaluateSingleCoupon(coupon, context);
         
         if (!evaluation.isValid()) {
-            return createFailureResponse(context.getOrderAmount(), evaluation.getApplyResponse().getMessage());
+            return buildFailureOrderResponse(context.getOrderAmount(), evaluation.getApplyResponse().getMessage());
         }
 
-        return createSuccessResponse(context, evaluation.getCoupon(), evaluation.getDiscountAmount(), "Áp dụng coupon thành công!");
+        return buildSuccessOrderResponse(context, evaluation.getCoupon(), evaluation.getDiscountAmount(), "Áp dụng coupon thành công!");
     }
     
     private OrderResponse processAutomaticCoupon(OrderContext context) {
@@ -60,10 +63,10 @@ public class OrderService {
         Optional<CouponEvaluation> bestEvaluation = findBestValidCoupon(validCoupons, context);
         
         if (bestEvaluation.isEmpty()) {
-            return createFailureResponse(context.getOrderAmount(), "Không có coupon nào phù hợp với đơn hàng này");
+            return buildFailureOrderResponse(context.getOrderAmount(), "Không có coupon nào phù hợp với đơn hàng này");
         }
-        CouponEvaluation best = bestEvaluation.get();
-        return createSuccessResponse(context, best.getCoupon(), best.getDiscountAmount(), "Áp dụng coupon tự động thành công!");
+        CouponEvaluation bestCouponEvaluation = bestEvaluation.get();
+        return buildSuccessOrderResponse(context, bestCouponEvaluation.getCoupon(), bestCouponEvaluation.getDiscountAmount(), "Áp dụng coupon tự động thành công!");
     }
     
     private CouponEvaluation evaluateSingleCoupon(Coupon coupon, OrderContext context) {
@@ -72,8 +75,9 @@ public class OrderService {
                 .toList();
 
         double baseDiscount = coupon.calculateDiscount(context.getOrderAmount());
+        context.setBaseDiscountAmount(baseDiscount);
         CouponApplyResponse applyResponse = ruleProcessor.processRules(rules, context, baseDiscount);
-        
+
         return new CouponEvaluation(coupon, applyResponse);
     }
 
@@ -85,7 +89,7 @@ public class OrderService {
                 .max(Comparator.comparingDouble(CouponEvaluation::getDiscountAmount));
     }
     
-    private OrderResponse createSuccessResponse(OrderContext context, Coupon coupon, double discountAmount, String messagePrefix) {
+    private OrderResponse buildSuccessOrderResponse(OrderContext context, Coupon coupon, double discountAmount, String messagePrefix) {
         double finalAmount = context.getOrderAmount() - discountAmount;
         
         CouponResponse couponResponse = createCouponResponse(coupon);
@@ -100,9 +104,9 @@ public class OrderService {
         return response;
     }
     
-    private OrderResponse createFailureResponse(double orderAmount, String message) {
+    private OrderResponse buildFailureOrderResponse(double orderAmount, String message) {
         OrderResponse response = new OrderResponse();
-        response.setDiscountAmount(0.0);
+        response.setDiscountAmount(GlobalConfig.MIN_DISCOUNT_AMOUNT);
         response.setFinalAmount(orderAmount);
         response.setTotalAmount(orderAmount);
         response.setMessage(message);
@@ -133,6 +137,7 @@ public class OrderService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
     public Coupon getMaxDiscountCoupon(List<Coupon> coupons, OrderContext context) {
         return findBestValidCoupon(coupons, context)
                 .map(CouponEvaluation::getCoupon)

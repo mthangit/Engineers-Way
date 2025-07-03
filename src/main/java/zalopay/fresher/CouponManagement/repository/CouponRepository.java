@@ -1,5 +1,7 @@
 package zalopay.fresher.CouponManagement.repository;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -19,7 +21,9 @@ public interface CouponRepository extends JpaRepository<Coupon, String> {
     
     List<Coupon> findByIsActiveTrue();
     
-    List<Coupon> findByDiscountType(String discountType);
+    Page<Coupon> findByIsActiveTrue(Pageable pageable);
+    
+
     
     @Query("SELECT c FROM Coupon c WHERE c.isActive = true AND c.startDate <= :currentTime AND c.expireDate >= :currentTime")
     List<Coupon> findValidCoupons(@Param("currentTime") LocalDateTime currentTime);

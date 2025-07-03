@@ -2,7 +2,7 @@ package zalopay.fresher.CouponManagement.model;
 
 import jakarta.persistence.*;
 import lombok.Data;
-import zalopay.fresher.CouponManagement.egine.rule.TypeRule;
+import zalopay.fresher.CouponManagement.engine.rule.RuleType;
 
 import java.time.LocalDateTime;
 
@@ -16,7 +16,7 @@ public class Rule {
 
     @Column(name = "type", nullable = false, length = 50)
     @Enumerated(EnumType.STRING)
-    TypeRule type;
+    RuleType type;
 
     @Column(name = "config", columnDefinition = "JSON")
     String config;

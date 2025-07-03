@@ -37,68 +37,32 @@
                 <div class="coupon-grid" id="couponGrid">
                     <!-- Coupon cards sẽ được load bởi JavaScript -->
                 </div>
-            </div>
-
-            <!-- Create Coupon Tab -->
-            <div id="create" class="tab-content">
-                <div class="section-header">
-                    <h2>Tạo mã giảm giá mới</h2>
-                </div>
                 
-                <form id="createCouponForm" class="coupon-form">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="couponCode">Mã giảm giá *</label>
-                            <input type="text" id="couponCode" name="code" required placeholder="VD: ZALOPAY50">
-                        </div>
-                        <div class="form-group">
-                            <label for="couponTitle">Tiêu đề *</label>
-                            <input type="text" id="couponTitle" name="title" required placeholder="VD: Giảm 50% đơn hàng">
-                        </div>
+                <!-- Pagination Controls -->
+                <div class="pagination-container" id="paginationContainer" style="display: none;">
+                    <div class="pagination-info">
+                        <span id="paginationInfo">Hiển thị 0 - 0 trong tổng số 0 coupon</span>
                     </div>
-
-                    <div class="form-group">
-                        <label for="couponDescription">Mô tả</label>
-                        <textarea id="couponDescription" name="description" placeholder="Mô tả chi tiết về coupon..."></textarea>
+                    <div class="pagination-controls">
+                        <button id="firstPageBtn" class="pagination-btn" disabled>« Đầu</button>
+                        <button id="prevPageBtn" class="pagination-btn" disabled>‹ Trước</button>
+                        <span class="pagination-pages" id="paginationPages">
+                            <!-- Page numbers sẽ được tạo bằng JavaScript -->
+                        </span>
+                        <button id="nextPageBtn" class="pagination-btn" disabled>Sau ›</button>
+                        <button id="lastPageBtn" class="pagination-btn" disabled>Cuối »</button>
                     </div>
-
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="discountType">Loại giảm giá *</label>
-                            <select id="discountType" name="discountType" required>
-                                <option value="">Chọn loại giảm giá</option>
-                                <option value="PERCENTAGE_DISCOUNT">Theo phần trăm (%)</option>
-                                <option value="FIXED_DISCOUNT">Cụ thể số tiền (VNĐ)</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="discountValue">Giá trị giảm *</label>
-                            <input type="number" id="discountValue" name="value" required min="0" step="0.01" placeholder="VD: 50">
-                        </div>
+                    <div class="pagination-size">
+                        <label for="pageSize">Hiển thị:</label>
+                        <select id="pageSize">
+                            <option value="5">5</option>
+                            <option value="10" selected>10</option>
+                            <option value="20">20</option>
+                            <option value="50">50</option>
+                        </select>
+                        <span>coupon/trang</span>
                     </div>
-
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="startDate">Ngày bắt đầu *</label>
-                            <input type="datetime-local" id="startDate" name="startDate" required>
-                        </div>
-                        <div class="form-group">
-                            <label for="expireDate">Ngày hết hạn *</label>
-                            <input type="datetime-local" id="expireDate" name="expireDate" required>
-                        </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="isActive" name="isActive" checked>
-                            Kích hoạt coupon
-                        </label>
-                    </div>
-
-                    <button type="submit" class="btn btn-primary">
-                        Tạo Coupon
-                    </button>
-                </form>
+                </div>
             </div>
 
             <!-- Order Calculation Tab -->
@@ -107,11 +71,18 @@
                     <h2>Tính toán giảm giá đơn hàng</h2>
                 </div>
                 
-                <form id="orderForm" class="order-form">
+                <form id="orderForm" class="order-form" method="post" action="javascript:void(0)">
                     <div class="form-row">
                         <div class="form-group">
                             <label for="totalAmount">Số tiền cần thanh toán (VNĐ) *</label>
-                            <input type="number" id="totalAmount" name="totalAmount" required min="0" step="1000" placeholder="VD: 100000">
+                            <input
+                                    type="number"
+                                    id="totalAmount"
+                                    name="totalAmount"
+                                    required
+                                    min="0.01"
+                                    step="0.01"
+                                    placeholder="VD: 100000">
                         </div>
                         <div class="form-group">
                             <label for="orderDate">Thời gian tạo đơn hàng *</label>
@@ -144,7 +115,7 @@
                 <span class="close">&times;</span>
             </div>
             <div class="modal-body">
-                <form id="editCouponForm" class="coupon-form">
+                <form id="editCouponForm" class="coupon-form" method="post" action="javascript:void(0)">
                     <input type="hidden" id="editCouponId" name="id">
                     
                     <div class="form-group">
@@ -164,15 +135,17 @@
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="editDiscountType">Loại giảm giá *</label>
-                            <select id="editDiscountType" name="discountType" required disabled>
-                                <option value="PERCENTAGE_DISCOUNT">Theo phần trăm (%)</option>
-                                <option value="FIXED_DISCOUNT">Cụ thể số tiền (VNĐ)</option>
-                            </select>
+                            <label>Loại giảm giá</label>
+                            <div class="discount-type-display" id="editDiscountTypeDisplay">
+                            </div>
+                            <input type="hidden" id="editDiscountType" name="discountType">
                         </div>
                         <div class="form-group">
-                            <label for="editValue">Giá trị giảm *</label>
-                            <input type="number" id="editValue" name="value" readonly>
+                            <label>Giá trị giảm</label>
+                            <div class="discount-value-display" id="editValueDisplay">
+                                <!-- Sẽ được hiển thị bởi JavaScript -->
+                            </div>
+                            <input type="hidden" id="editValue" name="value">
                         </div>
                     </div>
 

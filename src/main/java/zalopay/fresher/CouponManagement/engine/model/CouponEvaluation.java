@@ -1,8 +1,8 @@
-package zalopay.fresher.CouponManagement.egine.model;
+package zalopay.fresher.CouponManagement.engine.model;
 
-import lombok.Data;
 import lombok.Getter;
 import zalopay.fresher.CouponManagement.model.Coupon;
+import zalopay.fresher.CouponManagement.util.GlobalConfig;
 
 @Getter
 public class CouponEvaluation {
@@ -14,7 +14,7 @@ public class CouponEvaluation {
         this.coupon = coupon;
         this.applyResponse = applyResponse;
         this.discountAmount = applyResponse.isValid() && applyResponse.getDiscountAmount() != null ?
-            applyResponse.getDiscountAmount() : 0.0;
+            applyResponse.getDiscountAmount() : GlobalConfig.MIN_DISCOUNT_AMOUNT;
     }
 
     public boolean isValid() {

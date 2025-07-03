@@ -14,4 +14,9 @@ public class AppException extends RuntimeException{
         this.responseCode = responseCode;
     }
 
+    public AppException(ResponseCode responseCode, String message) {
+        super(message);
+        this.responseCode = responseCode;
+    }
+
 }

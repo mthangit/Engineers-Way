@@ -4,8 +4,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.ToString;
-
+import zalopay.fresher.CouponManagement.util.GlobalConfig;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 
@@ -14,6 +15,7 @@ import java.util.List;
 @Data
 @ToString(exclude = "couponRules")
 public class Coupon {
+    
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     String id;
@@ -21,14 +23,14 @@ public class Coupon {
     @Column(nullable = false, unique = true)
     String code;
 
-    @Column(name = "title", length = 255)
+    @Column(name = "title", length = GlobalConfig.TITLE_MAX_LENGTH)
     String title;
 
     @Column(name = "description", columnDefinition = "TEXT")
     String description;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "discount_type", nullable = false, length = 50)
+    @Column(name = "discount_type", nullable = false, length = GlobalConfig.DISCOUNT_TYPE_MAX_LENGTH)
     DiscountType discountType;
 
     @Column(name = "value", nullable = false)
@@ -51,7 +53,7 @@ public class Coupon {
 
     @OneToMany(mappedBy = "coupon", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @JsonIgnore
-    List<CouponRule> couponRules;
+    private List<CouponRule> couponRules = new ArrayList<>();
 
     public boolean isValid(LocalDateTime currentTime) {
         return isActive && 
@@ -59,15 +61,23 @@ public class Coupon {
                currentTime.isBefore(expireDate);
     }
 
+    private double calculatePercentageBaseDiscount(double orderAmount) {
+        return Math.max(orderAmount * (value / GlobalConfig.PERCENTAGE_DIVISOR), GlobalConfig.MIN_DISCOUNT_AMOUNT);
+    }
+
+    private double calculateFixedAmountDiscount(double orderAmount) {
+        return Math.max(Math.min(value, orderAmount), GlobalConfig.MIN_DISCOUNT_AMOUNT);
+    }
+
     public double calculateDiscount(double orderAmount) {
         switch (discountType){
             case PERCENTAGE_DISCOUNT -> {
-                return orderAmount * (value / 100);
+                return calculatePercentageBaseDiscount(orderAmount);
             }
             case FIXED_DISCOUNT -> {
-                return Math.max(Math.min(value, orderAmount), 0);
+                return calculateFixedAmountDiscount(orderAmount);
             }
         }
-        return orderAmount;
+        return GlobalConfig.DEFAULT_DISCOUNT;
     }
 }

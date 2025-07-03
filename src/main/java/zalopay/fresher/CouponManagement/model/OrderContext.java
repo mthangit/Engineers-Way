@@ -9,4 +9,6 @@ public class OrderContext {
     Double orderAmount;
     String couponCode;
     LocalDateTime orderDate;
+    Double baseDiscountAmount;
+
 }
