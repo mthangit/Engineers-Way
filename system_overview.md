@@ -1,4 +1,20 @@
-# OVERVIEW OF ASSIGNMENT
+# RULE ENGINE - MAPPING VÀ HANDLER SYSTEM
+
+## TỔNG QUAN SOLUTION
+
+**Rule Engine System** được thiết kế với **Strategy Pattern** kết hợp **Spring Dependency Injection** để xử lý các quy tắc business logic một cách linh hoạt và có thể mở rộng. Hệ thống này cho phép:
+
+- **Dynamic Rule Processing**: Xử lý các loại quy tắc khác nhau mà không cần modify core logic
+- **Annotation-Based Mapping**: Sử dụng `@HandlesRule` annotation để tự động map RuleType với Handler
+- **Spring Auto-Discovery**: Tự động detect và register các handler mới
+- **Fail-Fast Validation**: Dừng xử lý ngay khi có rule nào fail để tối ưu performance
+- **Chain Processing**: Các rule có thể modify discount amount theo chain pattern
+
+**Lợi ích chính:**
+- **Extensibility**: Thêm rule type mới chỉ cần 3 bước đơn giản
+- **Maintainability**: Mỗi rule được encapsulate trong handler riêng biệt
+- **Performance**: O(1) lookup time với HashMap mapping
+- **Reliability**: Comprehensive error handling và graceful degradation
 
 ## DATABASE STRUCTURE
 
@@ -33,7 +49,7 @@ Bảng này lưu trữ thông tin chính của các coupon với các trường 
 #### 2. Bảng `rules` - Master Rules Definition
 Bảng này lưu trữ định nghĩa các rule types có thể áp dụng cho coupons:
 - **id**: Primary key unique cho mỗi rule definition
-- **type**: Loại rule tương ứng với TypeRule enum (MIN_ORDER, MAX_DISCOUNT...)
+- **type**: Loại rule tương ứng với RuleType enum (MIN_ORDER, MAX_DISCOUNT, NOT_EXPIRE)
 - **config**: JSON configuration chứa parameters cụ thể cho rule
 - **description**: Mô tả rule dễ hiểu cho business users
 - **created_at, updated_at**: Timestamp để tracking changes
@@ -41,10 +57,12 @@ Bảng này lưu trữ định nghĩa các rule types có thể áp dụng cho c
 **Các rule types hiện có:**
 - **MIN_ORDER rules**: Quy định đơn hàng tối thiểu (100K, 200K, 500K, 1M VND)
 - **MAX_DISCOUNT rules**: Giới hạn số tiền giảm tối đa (50K, 100K, 200K, 500K VND)
+- **NOT_EXPIRE rules**: Kiểm tra thời gian hết hạn của coupon với custom expiry time
 
 **JSON Configuration format:**
 - Min order rules: chứa field "minOrderAmount" với giá trị VND
-- Max discount rules: chứa field "maxDiscountAmount" với giá trị VND
+- Max discount rules: chứa field "maxDiscountAmount" với giá trị VND  
+- Not expire rules: chứa field "expiryDateTime" với format ISO_LOCAL_DATE_TIME
 
 #### 3. Bảng `coupon_rule` - Many-to-Many Junction
 Bảng junction này kết nối coupons với rules, cho phép áp dụng nhiều rules cho một coupon:
@@ -63,239 +81,236 @@ Bảng junction này kết nối coupons với rules, cho phép áp dụng nhi�
 - Nếu có config: override specific parameters cho coupon này
 - Ví dụ: rule default min order 100K, nhưng coupon VIP có thể override thành 50K
 
-
-
-
 ### Kiến trúc cốt lõi
-Hệ thống tuân theo pattern: TypeRule Enum → RuleHandler Interface → Concrete Handler Component
+Hệ thống tuân theo pattern: RuleType Enum → @HandlesRule Annotation → RuleHandler Implementation
 
 ## PHÂN LOẠI RULES
 
-### 1. KindRule (Enum) - Phân loại theo mục đích
-**QUALIFICATION**: Quy tắc điều kiện kiểm tra đủ điều kiện hay không
-- Dùng để validate xem coupon có thể áp dụng cho order này không
-- Nếu có rule QUALIFICATION nào fail thì toàn bộ coupon bị reject
-- Ví dụ: minimum order amount, user level requirements
+### RuleType (Enum) - Định nghĩa loại rule cụ thể
 
-**ADJUSTMENT**: Quy tắc điều chỉnh thay đổi giá trị discount
-- Dùng để modify discount amount sau khi đã pass qualification
-- Apply theo chain, output của rule này là input của rule tiếp theo
-- Ví dụ: maximum discount cap, progressive discount rates
-
-### 2. TypeRule (Enum) - Định nghĩa loại rule cụ thể
 **MIN_ORDER**: Quy tắc đơn hàng tối thiểu
-- Thuộc nhóm QUALIFICATION
 - Kiểm tra order amount có đạt minimum requirement không
+- Nếu fail thì toàn bộ coupon bị reject
+- Config: `{"minOrderAmount": 100000}` (VND)
 
 **MAX_DISCOUNT**: Quy tắc giảm giá tối đa  
-- Thuộc nhóm ADJUSTMENT
 - Giới hạn discount amount ở mức tối đa cho phép
+- Apply sau khi đã pass validation
+- Config: `{"maxDiscountAmount": 50000}` (VND)
+
+**NOT_EXPIRE**: Quy tắc kiểm tra hết hạn
+- Kiểm tra coupon có còn hiệu lực tại thời điểm order không
+- Cho phép custom expiry time khác với coupon.expire_date
+- Config: `{"expiryDateTime": "2024-12-31T23:59:59"}` (ISO format)
 
 ## RULE HANDLER INTERFACE
 
 ### Contract chính
-Interface RuleHandler định nghĩa 4 methods cơ bản:
+Interface RuleHandler định nghĩa contract đơn giản với 3 methods:
 
-**getType()**: Xác định loại rule này xử lý (MIN_ORDER, MAX_DISCOUNT...)
+**getType()**: Tự động extract RuleType từ @HandlesRule annotation
+- Sử dụng reflection để đọc annotation value
+- Throw exception nếu handler không có annotation
+- Đảm bảo type safety cho mapping system
 
-**getKindRule()**: Xác định nhóm rule (QUALIFICATION hoặc ADJUSTMENT)
+**createResult()**: Helper method để tạo RuleResult standardized
+- Tự động set ruleType từ getType()
+- Parameters: isValid, message, discountAmount
+- Consistent result format cho tất cả handlers
 
-**validate()**: Method cho QUALIFICATION rules, nhận config và context, return RuleResult
-
-**adjust()**: Method cho ADJUSTMENT rules, nhận config, context và baseDiscount, return modified discount
+**applyRule()**: Main business logic method
+- Input: JsonNode config, OrderContext context
+- Output: RuleResult với evaluation result
+- Handlers implement business logic cụ thể trong method này
 
 ### Nguyên tắc thiết kế
-**Default methods**: Handlers chỉ override method cần thiết
-- QUALIFICATION rules chỉ override validate() method
-- ADJUSTMENT rules chỉ override adjust() method
-- Không cần implement tất cả methods, tránh boilerplate code
+**Single Responsibility**: Mỗi handler chỉ xử lý một loại rule duy nhất
 
-**Flexible configuration**: Sử dụng JsonNode cho cấu hình linh hoạt
-- Cho phép complex JSON structures
-- Type-safe access với JsonNode methods
-- Runtime parsing từ database JSON strings
+**Annotation-Based Mapping**: Sử dụng @HandlesRule thay vì manual registration
+
+**Flexible JSON Config**: JsonNode cho phép complex configurations mà không cần predefined classes
 
 ## MAPPING SYSTEM
 
-### Auto-Discovery và Registration
-RuleEngineConfig class có responsibility tạo mapping giữa TypeRule và Handler instances.
-
-Spring tự động inject tất cả RuleHandler beans vào một List, sau đó convert thành Map với:
-- **Key**: TypeRule enum (result của getType() method)
-- **Value**: Handler instance (concrete implementation)
+### Annotation-Based Auto-Discovery
+RuleEngineConfig class sử dụng Spring DI để tự động tạo mapping giữa RuleType và Handler instances.
 
 ### Cơ chế hoạt động
 **Spring Component Scan**: Tìm tất cả class implements RuleHandler với @Component annotation
 
-**Auto-Injection**: Inject List<RuleHandler> vào RuleEngineConfig constructor hoặc method parameter
+**Auto-Injection**: Spring inject List<RuleHandler> vào RuleEngineConfig.ruleHandlerMap() method
 
-**Map Creation**: Stream through list để tạo Map<TypeRule, RuleHandler> cho O(1) lookup
+**Stream-Based Map Creation**: 
+```java
+return ruleHandlers.stream()
+    .collect(Collectors.toMap(RuleHandler::getType, handler -> handler));
+```
 
-**Runtime Lookup**: RuleProcessor sử dụng map để tìm handler phù hợp với rule type
+**Runtime Lookup**: RuleProcessor sử dụng map để tìm handler với O(1) performance
+
+### Configuration Bean Creation
+RuleEngineConfig tạo 2 Spring beans chính:
+- **ruleHandlerMap**: Map<RuleType, RuleHandler> cho handler lookup
+- **ruleProcessor**: RuleProcessor instance với injected dependencies
 
 ## CONCRETE HANDLERS
 
-### 1. MinOrderHandler (QUALIFICATION)
+### 1. MinOrderHandler (Validation Rule)
 
-Handler này xử lý rule kiểm tra đơn hàng tối thiểu:
-- **Type**: MIN_ORDER
-- **Kind**: QUALIFICATION  
-- **Chức năng**: Validate order amount có đạt minimum requirement không
+Handler kiểm tra đơn hàng tối thiểu:
+- **Annotation**: `@HandlesRule(RuleType.MIN_ORDER)`
+- **Purpose**: Validate order amount đạt minimum requirement
 
-**Logic xử lý:**
+**Business Logic:**
 - Parse "minOrderAmount" từ JSON config
-- So sánh với order amount từ OrderContext
-- Return RuleResult với status pass/fail và message tương ứng
-- Nếu order amount >= minOrderAmount thì pass, ngược lại fail
+- Compare với order amount từ OrderContext  
+- Return success nếu orderAmount >= minOrderAmount
+- Return failure với descriptive message nếu không đạt
 
-**Error handling:**
-- Nếu config thiếu "minOrderAmount": return fail với message "Missing configuration"
-- Nếu order amount null: return fail
-- Graceful handling cho tất cả edge cases
+**Error Handling:**
+- Invalid config → return failure với message "Min order rule configuration is invalid"
+- Missing orderAmount → return failure
+- Graceful handling cho all edge cases
 
-**Config format**: JSON object chứa field "minOrderAmount" với giá trị numeric (VND)
+### 2. MaxDiscountHandler (Adjustment Rule)
 
-### 2. MaxDiscountHandler (ADJUSTMENT)
+Handler giới hạn discount tối đa:
+- **Annotation**: `@HandlesRule(RuleType.MAX_DISCOUNT)`  
+- **Purpose**: Cap discount amount ở mức maximum allowed
 
-Handler này xử lý rule giới hạn discount tối đa:
-- **Type**: MAX_DISCOUNT
-- **Kind**: ADJUSTMENT
-- **Chức năng**: Cap discount amount ở mức tối đa cho phép
+**Business Logic:**
+- Parse "maxDiscountAmount" từ JSON config
+- Compare với baseDiscountAmount từ context
+- Return Math.min(baseDiscount, maxDiscount)
+- Preserve original discount nếu đã nhỏ hơn max
 
-**Logic xử lý:**
-- Parse "maxDiscountAmount" từ JSON config  
-- So sánh với baseDiscount được truyền vào
-- Nếu baseDiscount > maxDiscount thì return maxDiscount
-- Ngược lại return baseDiscount không đổi
+**Chain Integration:**
+- Nhận discount amount từ previous processing steps
+- Apply capping logic
+- Return adjusted amount cho subsequent rules
 
-**Chain processing:**
-- Nhận baseDiscount từ step trước (có thể là original discount hoặc đã adjusted)
-- Apply cap logic
-- Return modified discount cho step tiếp theo
+### 3. NotExpireHandler (Validation Rule)
 
-**Config format**: JSON object chứa field "maxDiscountAmount" với giá trị numeric (VND)
+Handler kiểm tra thời gian hết hạn:
+- **Annotation**: `@HandlesRule(RuleType.NOT_EXPIRE)`
+- **Purpose**: Validate coupon chưa hết hạn tại thời điểm order
+
+**Business Logic:**
+- Parse "expiryDateTime" từ config với ISO_LOCAL_DATE_TIME format
+- Get current time từ OrderContext.orderDate hoặc LocalDateTime.now()
+- Return success nếu currentTime <= expiryDateTime
+- Return failure với detailed expiry information
+
+**Advanced Features:**
+- Support custom expiry time khác với coupon.expire_date
+- Comprehensive datetime parsing với proper error handling
+- Detailed failure messages với actual vs expected times
 
 ## RULE PROCESSOR - ENGINE CORE
 
-### Workflow xử lý rules
-RuleProcessor là core component thực hiện business logic xử lý rules theo 2-phase approach:
+### Unified Processing Workflow
+RuleProcessor thực hiện single-phase processing thay vì separate qualification/adjustment phases:
 
 **Input**: List<Rule> rules, OrderContext context, Double baseDiscount
 **Output**: CouponApplyResponse với success/failure status và final discount amount
 
-**Main Flow:**
-1. Phase 1 - QUALIFICATION: Validate tất cả qualification rules
-2. Nếu có rule nào fail → return failure response ngay lập tức (fail-fast)
-3. Phase 2 - ADJUSTMENT: Apply chain of adjustments lên discount amount
-4. Return success response với final discount
+**Simplified Flow:**
+1. Iterate through tất cả rules sequentially
+2. Với mỗi rule: lookup handler → parse config → execute applyRule()
+3. Collect results và process theo business logic
+4. Return appropriate response type
 
-### Phase 1: Qualification Processing
-**Mục đích**: Kiểm tra xem coupon có đủ điều kiện áp dụng cho order này không
+### Core Processing Methods
 
-**Process flow:**
-- Iterate through tất cả rules
-- Filter chỉ những rules có KindRule = QUALIFICATION
-- Với mỗi qualification rule:
-  - Lookup handler từ ruleHandlerMap using rule.getType()
-  - Parse JSON config từ rule.getConfig()
-  - Call handler.validate(config, context)
-  - Collect RuleResult
+**processRules()**: Main entry point cho rule evaluation
+- Handle empty rules case với buildNoRuleResponse()
+- Delegate actual processing cho processAllRules()
+- Build final response based on processing results
 
-**Fail-fast logic:**
-- Nếu có bất kỳ rule nào return isValid = false
-- Immediately set allPassed = false
-- Continue checking remaining rules để collect full diagnostic info
-- Return overall false nếu có any failures
+**processAllRules()**: Sequential rule processing
+- Iterate through rules với error handling
+- Lookup handler từ ruleHandlerMap
+- Parse JSON config với JsonProcessingException handling
+- Execute handler.applyRule() với comprehensive error catching
+- Update discount amount based on rule results
 
-**Error handling:**
-- JsonProcessingException từ config parsing → mark as failed
-- Missing handler → skip rule với warning log
-- Handler exception → graceful handling với detailed error message
+**Response Building Methods:**
+- **buildNoRuleResponse()**: Cho coupons không có additional rules
+- **buildFailedQualificationResponse()**: Cho orders không meet requirements  
+- **buildSuccessResponse()**: Cho successful coupon applications
 
-### Phase 2: Adjustment Processing
-**Mục đích**: Modify discount amount dựa trên adjustment rules
+### Error Handling Strategy
+**Graceful Degradation**: Rule processing errors không crash entire flow
 
-**Chain processing:**
-- Start với baseDiscount (từ coupon.value)
-- Iterate through tất cả rules với KindRule = ADJUSTMENT
-- Với mỗi adjustment rule:
-  - Lookup handler từ map
-  - Parse config
-  - Call handler.adjust(config, context, currentDiscount)
-  - Update currentDiscount với return value
+**Detailed Error Messages**: Specific error information trong RuleResult
 
-**Sequential application:**
-- Output của rule này = input của rule tiếp theo
-- Cho phép complex business logic với multiple adjustments
-- Maintain audit trail của từng adjustment step
+**Fail-Fast for Critical Rules**: Stop processing nếu validation rules fail
 
-**Safety guarantees:**
-- Final discount luôn >= 0 (không cho phép negative discount)
-- Config errors được handle gracefully mà không crash process
-- Invalid adjustments không break chain
+**Chain Continuation**: Adjustment rules continue processing even nếu có non-critical errors
 
 ## CÁCH THÊM RULE TYPE MỚI
 
-Hệ thống được thiết kế để việc thêm rule type mới trở nên đơn giản và không ảnh hưởng đến code hiện tại. Quá trình này chỉ cần 4 bước:
+Hệ thống được thiết kế để việc thêm rule type mới trở nên đơn giản với chỉ 3 bước:
 
-### Bước 1: Mở rộng TypeRule Enum
-Thêm constant mới vào enum `TypeRule` để định nghĩa loại rule mới. Ví dụ muốn thêm rule kiểm tra thời gian và level user:
+### Bước 1: Thêm RuleType Enum Value
+Thêm constant mới vào enum `RuleType`. Ví dụ cho rule kiểm tra user level:
 
-- `TIME_BASED`: Rule kiểm tra coupon chỉ áp dụng trong khung giờ nhất định
-- `USER_LEVEL`: Rule kiểm tra level của user (VIP, Gold, Silver...)
-
-Enum này đóng vai trò như identifier duy nhất cho mỗi loại rule.
+```java
+public enum RuleType {
+    MIN_ORDER,
+    MAX_DISCOUNT,
+    NOT_EXPIRE,
+    USER_LEVEL  // New rule type
+}
+```
 
 ### Bước 2: Implement Handler Class
-Tạo class mới implement interface `RuleHandler` và annotate với `@Component`:
+Tạo class mới implement RuleHandler với annotation:
 
-**Thiết kế TimeBasedHandler:**
-- Implement method `getType()` return `TIME_BASED`
-- Implement method `getKindRule()` return `QUALIFICATION` (vì đây là rule kiểm tra điều kiện)
-- Override method `validate()` để implement business logic:
-  - Parse startTime và endTime từ JSON config
-  - So sánh với thời gian order hiện tại
-  - Return RuleResult với trạng thái pass/fail
+```java
+@Component
+@HandlesRule(RuleType.USER_LEVEL)
+public class UserLevelHandler implements RuleHandler {
+    
+    @Override
+    public RuleResult applyRule(JsonNode config, OrderContext context) {
+        // Parse required user level từ config
+        String requiredLevel = config.get("requiredLevel").asText();
+        
+        // Get user level từ context (cần extend OrderContext)
+        String userLevel = context.getUserLevel();
+        
+        // Business logic validation
+        if (isValidLevel(userLevel, requiredLevel)) {
+            return createResult(true, "User level requirement met", 0.0);
+        } else {
+            return createResult(false, "User level insufficient", 0.0);
+        }
+    }
+    
+    private boolean isValidLevel(String userLevel, String requiredLevel) {
+        // Implementation logic cho level comparison
+        return /* business logic */;
+    }
+}
+```
 
-**Business Logic Example:**
-- Lấy thời gian order từ OrderContext
-- Parse config JSON để get startTime="09:00", endTime="17:00"  
-- Check xem order time có nằm trong khoảng [09:00, 17:00] không
-- Return appropriate message: "Trong khung giờ áp dụng" hoặc "Ngoài khung giờ áp dụng"
+### Bước 3: Database Configuration
+Insert rule definition vào database:
 
-### Bước 3: Thêm Rule Definition vào Database
-Insert record mới vào bảng `rules` với:
-- `id`: unique identifier (ví dụ: "rule-time-business-hours")
-- `type`: "TIME_BASED" (phải match với enum)
-- `config`: JSON string chứa business parameters
-- `description`: Mô tả dễ hiểu cho business users
+```sql
+INSERT INTO rules (id, type, config, description) VALUES 
+('rule-user-level-vip', 'USER_LEVEL', 
+ '{"requiredLevel": "VIP"}', 
+ 'Require VIP user level');
+```
 
-**Ví dụ JSON config:**
-- `{"startTime": "09:00", "endTime": "17:00"}` cho giờ hành chính
-- `{"startTime": "18:00", "endTime": "22:00"}` cho giờ tối
-- `{"startTime": "00:00", "endTime": "06:00"}` cho giờ đêm khuya
-
-### Bước 4: Auto-Discovery tự động hoạt động
-
-**Startup Process:**
-1. Spring Component Scan tự động detect `TimeBasedHandler` do có `@Component`
-2. Spring auto-inject handler này vào `List<RuleHandler>` trong RuleEngineConfig
-3. Method `ruleHandlerMap()` tự động add entry: `TIME_BASED → TimeBasedHandler instance`
-4. RuleProcessor có thể immediate sử dụng rule type mới
-
-**Runtime Behavior:**
-- Khi có rule với type="TIME_BASED" từ database
-- RuleProcessor lookup `ruleHandlerMap.get(TIME_BASED)`
-- Tìm thấy TimeBasedHandler instance
-- Gọi appropriate method (validate/adjust) dựa trên KindRule
-- Business logic execute và return result
-
-**Zero Configuration:**
-- Không cần modify existing code
-- Không cần restart application (nếu hot reload enabled)
-- Existing coupons không bị ảnh hưởng
-- New rule type immediate available cho tất cả flows
-
+### Bước 4: Automatic Integration
+**Zero Configuration Required:**
+- Spring auto-detect UserLevelHandler do có @Component
+- Auto-inject vào List<RuleHandler> trong RuleEngineConfig
+- Tự động add entry vào ruleHandlerMap: USER_LEVEL → UserLevelHandler
+- RuleProcessor immediate có thể sử dụng rule type mới
 
 ## QUY TRÌNH XỬ LÝ CHI TIẾT
 
@@ -310,7 +325,7 @@ Khi có một order request, hệ thống sẽ xác định đây là **Manual C
 - Nếu tìm thấy và coupon còn active, tiến hành validate rules
 
 **Auto Coupon Flow:**  
-- Hệ thống gọi `CouponService.getAllActiveCoupons()` để lấy tất cả coupon đang hoạt động
+- Hệ thống gọi `CouponService.getValidCoupons()` để lấy tất cả coupon còn hiệu lực
 - Iterate qua từng coupon một cách tuần tự
 - Với mỗi coupon, kiểm tra xem có thể áp dụng được không
 - Chọn coupon tốt nhất (thường là cho discount cao nhất)
@@ -323,93 +338,81 @@ Sau khi có coupon, hệ thống sẽ:
 - Tạo List<Rule> để truyền vào RuleProcessor
 
 **Bước 3: Rule Processing**
-`RuleProcessor.processRules()` sẽ thực hiện xử lý 2 phases tuần tự
+`RuleProcessor.processRules()` sẽ thực hiện unified processing
 
 ### 2. Chi tiết Rule Processing Engine
 
-**Phase 1: QUALIFICATION (Kiểm tra điều kiện)**
-Đây là phase quan trọng nhất, quyết định coupon có được áp dụng hay không:
+**Unified Processing Approach:**
+RuleProcessor xử lý tất cả rules trong single pass thay vì separate phases:
 
-- Hệ thống duyệt qua tất cả rules của coupon
-- Chỉ xử lý những rules có `KindRule = QUALIFICATION`  
-- Với mỗi qualification rule:
-  - Lookup handler tương ứng từ `ruleHandlerMap`
-  - Parse JSON config từ database
-  - Gọi method `validate()` của handler
-  - Nhận về `RuleResult` với trạng thái pass/fail
+- Iterate through tất cả rules theo thứ tự
+- Với mỗi rule:
+  - Lookup handler từ `ruleHandlerMap` using rule.getType()
+  - Parse JSON config từ rule.getConfig()  
+  - Execute `handler.applyRule(config, context)`
+  - Process RuleResult based on business logic
 
-**Fail-Fast Logic:**
-- Nếu có bất kỳ qualification rule nào fail → toàn bộ coupon bị reject
-- Không cần kiểm tra các rule còn lại
-- Return ngay failure response với message cụ thể
+**Processing Logic:**
+- Nếu có rule nào return isValid = false → fail toàn bộ coupon
+- Adjustment rules có thể modify discount amount
+- Continue processing để collect diagnostic information
+- Final discount = max(GlobalConfig.MIN_DISCOUNT_AMOUNT, processedDiscount)
 
-**Phase 2: ADJUSTMENT (Điều chỉnh giá trị)**
-Chỉ chạy khi tất cả qualification rules đã pass:
-
-- Bắt đầu với base discount value (từ coupon.value)
-- Duyệt qua tất cả rules có `KindRule = ADJUSTMENT`
-- Với mỗi adjustment rule:
-  - Lookup handler từ map
-  - Parse JSON config  
-  - Gọi method `adjust()` với current discount value
-  - Nhận về modified discount value
-  - Update discount value cho lần iteration tiếp theo
-
-**Chain Processing:**
-- Adjustment rules được apply theo thứ tự chain
-- Output của rule này = input của rule tiếp theo
-- Đảm bảo final discount >= 0
+**Error Handling:**
+- JsonProcessingException → mark rule as failed
+- Missing handler → skip với error message
+- Handler exceptions → graceful handling với detailed logging
 
 ### 3. Rule Handler Mapping System
 
-**Auto-Discovery Process:**
-Quá trình này diễn ra khi application startup:
+**Annotation-Based Discovery:**
+Quá trình mapping diễn ra tại application startup:
 
 **Bước 1: Component Scanning**
-- Spring scan tất cả classes trong package
-- Tìm các class implement `RuleHandler` interface và có annotation `@Component`
-- Tự động tạo instance của các handler này
+- Spring scan package để tìm classes implement RuleHandler
+- Filter classes có @Component annotation
+- Tạo instances của các handler
 
-**Bước 2: Dependency Injection**
-- Spring inject tất cả RuleHandler instances vào `List<RuleHandler>`
-- List này được truyền vào `RuleEngineConfig.ruleHandlerMap()` method
+**Bước 2: Dependency Injection**  
+- Spring inject List<RuleHandler> vào RuleEngineConfig
+- List chứa tất cả handler instances
 
 **Bước 3: Map Creation**
-- Method `ruleHandlerMap()` tạo `Map<TypeRule, RuleHandler>`
-- Key = result của `handler.getType()` (ví dụ: MIN_ORDER)
-- Value = handler instance (ví dụ: MinOrderHandler instance)
-- Map này được register như một Spring Bean
+- Method `ruleHandlerMap()` sử dụng Stream API:
+```java
+return ruleHandlers.stream()
+    .collect(Collectors.toMap(RuleHandler::getType, handler -> handler));
+```
 
-**Bước 4: Runtime Usage**
-- Khi cần xử lý rule, RuleProcessor lookup handler từ map
-- O(1) lookup time với HashMap
-- Type-safe với enum keys
+**Bước 4: Bean Registration**
+- Map được register như Spring Bean
+- Inject vào RuleProcessor để sử dụng
 
 ### 4. JSON Configuration Processing
 
 **Database Storage:**
-- Rule configurations được lưu dưới dạng JSON string trong database
-- Cho phép flexible business rules mà không cần change code
+- Rule configurations được lưu dưới dạng JSON string
+- Flexible structure cho different rule types
 
 **Runtime Parsing:**
-- Khi cần sử dụng, `ObjectMapper.readTree()` parse JSON string thành `JsonNode`
-- JsonNode cung cấp methods để extract values type-safe
-- Handler có thể access nested JSON properties
+- `ObjectMapper.readTree()` parse JSON thành JsonNode
+- Type-safe access với JsonNode methods
+- Support nested JSON structures
 
 **Configuration Priority:**
 1. **coupon_rule.config** (Override cao nhất)
-2. **rules.config** (Default của rule type)  
-3. **Handler defaults** (Hard-coded trong code)
+2. **rules.config** (Default configuration)
+3. **Handler defaults** (Fallback values)
 
 **Error Handling:**
-- Nếu JSON invalid → graceful degradation
-- Nếu required fields missing → rule fails safely
-- Detailed error messages trong RuleResult
+- Invalid JSON → graceful failure với descriptive message
+- Missing required fields → rule fails với specific error
+- Type mismatches → proper error reporting
 
 ## SAMPLE DATA TRONG DATABASE
 
-### Rules Master Data (8 rules)
-Database hiện có 8 rule definitions covering 2 rule types chính:
+### Rules Master Data (3 rule types)
+Database hiện có rules covering 3 rule types chính:
 
 **Min Order Rules (4 variations):**
 - rule-min-order-1: Minimum order 100,000 VND
@@ -422,6 +425,11 @@ Database hiện có 8 rule definitions covering 2 rule types chính:
 - rule-max-discount-2: Maximum discount 100,000 VND
 - rule-max-discount-3: Maximum discount 200,000 VND
 - rule-max-discount-4: Maximum discount 500,000 VND
+
+**Not Expire Rules (Custom expiry validation):**
+- rule-not-expire-1: Custom expiry times cho special campaigns
+- rule-not-expire-2: Extended validity periods
+- rule-not-expire-3: Holiday-specific expiry rules
 
 ### Coupons Sample (100 coupons)
 Database chứa 100 sample coupons được phân bổ như sau:
@@ -439,6 +447,32 @@ Database chứa 100 sample coupons được phân bổ như sau:
 - MEGA10M: Giảm ngay 10,000,000 VND với min order 1M
 
 ### Coupon-Rule Mapping Patterns
-**Percentage coupons**: Thường có both MIN_ORDER + MAX_DISCOUNT rules để kiểm soát cả input và output
-**Fixed coupons**: Chỉ có MIN_ORDER rules vì không cần giới hạn discount amount (đã fix sẵn)
-**High-value coupons**: Require higher minimum orders để protect business margin
+**Percentage coupons**: Thường có cả MIN_ORDER + MAX_DISCOUNT + NOT_EXPIRE rules
+**Fixed coupons**: Có MIN_ORDER + NOT_EXPIRE rules (không cần max discount)
+**Special campaign coupons**: Sử dụng NOT_EXPIRE rules với custom expiry times
+**High-value coupons**: Require higher minimum orders và multiple validation rules
+
+## TÓM TẮT SOLUTION
+
+### Kiến trúc và Thiết kế
+**Strategy Pattern + Spring DI**: Kết hợp Strategy Pattern với Spring Dependency Injection để tạo ra hệ thống rule processing linh hoạt và có thể mở rộng.
+
+**Annotation-Driven Mapping**: Sử dụng `@HandlesRule` annotation để tự động map RuleType với Handler implementation, giảm thiểu boilerplate code và manual configuration.
+
+**Unified Processing Model**: Thay vì phân chia phức tạp thành qualification/adjustment phases, hệ thống sử dụng single-pass processing với flexible business logic.
+
+### Lợi ích Kinh doanh
+**Rapid Feature Development**: Thêm rule type mới chỉ cần 3 bước đơn giản (enum + handler + database), cho phép business team nhanh chóng implement new promotions.
+
+**Data-Driven Configuration**: Rule parameters được lưu trong database dưới dạng JSON, cho phép business users modify rules mà không cần deploy code.
+
+**Scalable Architecture**: Hệ thống handle được volume lớn với O(1) handler lookup và efficient rule processing.
+
+### Tính năng Kỹ thuật
+**Comprehensive Error Handling**: Graceful degradation với detailed error messages, đảm bảo system stability ngay cả khi có invalid configurations.
+
+**Type Safety**: Enum-based rule types và annotation-driven mapping đảm bảo compile-time safety và runtime reliability.
+
+**Spring Integration**: Full integration với Spring ecosystem cho dependency injection, transaction management, và configuration management.
+
+**Maintainable Code**: Clear separation of concerns với mỗi rule type có dedicated handler, dễ dàng debug và maintain.
