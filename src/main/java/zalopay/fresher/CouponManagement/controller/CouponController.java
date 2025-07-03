@@ -15,13 +15,14 @@ import zalopay.fresher.CouponManagement.exception.AppException;
 import zalopay.fresher.CouponManagement.model.Coupon;
 import zalopay.fresher.CouponManagement.service.CouponService;
 import zalopay.fresher.CouponManagement.util.ErrorMessages;
+import zalopay.fresher.CouponManagement.util.GlobalConfig;
 import zalopay.fresher.CouponManagement.util.ValidationUtils;
 
 import java.util.List;
 import java.util.Optional;
 
 @RestController
-@RequestMapping("/api/coupons")
+@RequestMapping(GlobalConfig.API_V1_BASE_PATH + "/coupons")
 @RequiredArgsConstructor
 public class CouponController {
     

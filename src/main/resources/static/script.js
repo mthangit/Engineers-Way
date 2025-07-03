@@ -1,5 +1,5 @@
 // API endpoints
-const API_BASE = '/api';
+const API_BASE = '/api/v1';
 const ENDPOINTS = {
     coupons: `${API_BASE}/coupons`,
     orders: `${API_BASE}/orders/apply-coupon`

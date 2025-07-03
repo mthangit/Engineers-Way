@@ -7,10 +7,11 @@ import org.springframework.web.bind.annotation.*;
 import zalopay.fresher.CouponManagement.dto.OrderCreateRequest;
 import zalopay.fresher.CouponManagement.dto.OrderResponse;
 import zalopay.fresher.CouponManagement.service.OrderService;
+import zalopay.fresher.CouponManagement.util.GlobalConfig;
 import zalopay.fresher.CouponManagement.util.ValidationUtils;
 
 @RestController
-@RequestMapping("/api/orders")
+@RequestMapping(GlobalConfig.API_V1_BASE_PATH + "/orders")
 @RequiredArgsConstructor
 public class OrderController {
     private final OrderService orderService;

@@ -23,4 +23,9 @@ public class GlobalConfig {
     public static final String MAX_DISCOUNT_CONFIG_KEY = "maxDiscountAmount";
     public static final String MIN_ORDER_CONFIG_KEY = "minOrderAmount";
     public static final String EXPIRY_DATETIME_CONFIG_KEY = "expiryDateTime";
+
+    // ===== API VERSIONING CONSTANTS =====
+    public static final String API_BASE_PATH = "/api";
+    public static final String API_VERSION_V1 = "/v1";
+    public static final String API_V1_BASE_PATH = API_BASE_PATH + API_VERSION_V1;
 }
